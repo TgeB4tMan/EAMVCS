@@ -1,7 +1,7 @@
 # EAMVCS
 Emotion-Aware Multilingual Voice Cloning System
 
-## 🛠️ Environment Setup
+
 To replicate this environment, follow these steps:
 
 1. **Create the Virtual Environment:**
@@ -15,4 +15,4 @@ To replicate this environment, follow these steps:
     Mac/Linux: source venv/bin/activate
 
    Install Dependencies:
-pip install -r requirements.txt
+   pip install -r requirements.txt
