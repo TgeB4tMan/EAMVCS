@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>NeuroVoice — Multilingual TTS</title>
+  <link rel="stylesheet" href="styles.css" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+</head>
+<body>
+
+  <div class="card">
+    <h1>NeuroVoice</h1>
+    <p class="subtitle">Multilingual Emotional Text-to-Speech</p>
+
+    <label>Text Input</label>
+    <textarea id="text" placeholder="Type something magical..."></textarea>
+
+    <label>Language</label>
+    <select id="language">
+      <option value="en">English</option>
+      <option value="hi">Hindi</option>
+      <option value="ta">Tamil</option>
+      <option value="es">Spanish</option>
+    </select>
+
+    <label>Reference Voice (optional)</label>
+    <input type="file" id="audio" accept=".wav,.mp3">
+
+    <button onclick="generate()">Generate Voice</button>
+
+    <div class="output">
+      <audio id="player" controls></audio>
+      <a id="download" download="neurovoice.wav">Download</a>
+    </div>
+  </div>
+
+<script src="script.js"></script>
+</body>
+</html>
