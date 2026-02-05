@@ -41,7 +41,6 @@ async function generate() {
     return;
   }
 
-  // Reference voice is mandatory
   if (!uploadedAudio && !recordedBlob) {
     alert("Please upload or record a reference voice");
     return;
@@ -58,19 +57,18 @@ async function generate() {
   }
 
   try {
-    const response = await fetch("http://localhost:5000/generate", {
+    const response = await fetch("http://localhost:8080/synthesize", {
       method: "POST",
       body: formData
     });
 
-    if (!response.ok) throw new Error();
+    const data = await response.json();
+    console.log("Backend response:", data);
+    alert("Request successful! Check backend logs.");
 
-    const blob = await response.blob();
-    const url = URL.createObjectURL(blob);
-
-    document.getElementById("player").src = url;
-    document.getElementById("download").href = url;
-  } catch {
+  } catch (err) {
     alert("Backend not connected");
+    console.error(err);
   }
 }
+

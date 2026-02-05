@@ -8,9 +8,8 @@ import os
 app = FastAPI()
 
 # Allow frontend (Vite / React)
-origins = [
-    "http://localhost:5173",
-]
+origins = ["*"]
+
 
 app.add_middleware(
     CORSMiddleware,
