@@ -12,7 +12,7 @@ tts = TTS(model_name="tts_models/multilingual/multi-dataset/your_tts", gpu=False
 # Note: YourTTS REQUIRES a speaker_wav to start, even for a basic test
 # You can use any short .wav file you have on your computer
 tts.tts_to_file(text="Hi my name is baevin martin thomas", 
-                speaker_wav="test_sample.wav", 
+                speaker_wav="Rajagiri Valley 2.wav", 
                 language="en", 
                 file_path="output.wav")
 
