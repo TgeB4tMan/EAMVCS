@@ -1,33 +1,79 @@
+"""
+extract.py
+
+This module extracts:
+1. Speaker embeddings (voice identity representation)
+2. Emotion embeddings (emotional tone representation)
+
+Models are loaded once at startup for performance optimization.
+Embeddings are saved as .npy files for reuse or analysis.
+"""
+
 import numpy as np
-import torch
-import librosa
 from resemblyzer import VoiceEncoder, preprocess_wav
 from speechbrain.inference.interfaces import foreign_class
 
-def extract_speaker_embedding(wav_path):
+# -------------------------------------------------------------------
+# Model Initialization (Loaded Once for Efficiency)
+# -------------------------------------------------------------------
+
+# Speaker embedding model (Resemblyzer)
+speaker_encoder = VoiceEncoder()
+
+# Emotion classification model (SpeechBrain)
+emotion_classifier = foreign_class(
+    source="speechbrain/emotion-recognition-wav2vec2-IEMOCAP",
+    pymodule_file="custom_interface.py",
+    classname="CustomEncoderWav2vec2Classifier",
+)
+
+
+def extract_speaker_embedding(wav_path: str):
+    """
+    Extract speaker embedding from an audio file.
+
+    Speaker embedding represents the unique voice characteristics
+    of a person.
+
+    Args:
+        wav_path (str): Path to cleaned WAV file.
+
+    Returns:
+        numpy.ndarray: 256-dimensional speaker embedding vector.
+    """
+
     wav = preprocess_wav(wav_path)
-    encoder = VoiceEncoder()
-    embedding = encoder.embed_utterance(wav)
+    embedding = speaker_encoder.embed_utterance(wav)
+
+    # Save embedding to file
     np.save("speaker_embedding.npy", embedding)
-    print("Speaker embedding saved.")
+
     return embedding
 
-def extract_emotion_embedding(wav_path):
-    classifier = foreign_class(
-        source="speechbrain/emotion-recognition-wav2vec2-IEMOCAP",
-        pymodule_file="custom_interface.py",
-        classname="CustomEncoderWav2vec2Classifier",
-    )
-    
-    out_prob, score, index, text_lab = classifier.classify_file(wav_path)
-    
-    emotion_embedding = out_prob.detach().numpy()
-    np.save("emotion_embedding.npy", emotion_embedding)
-    
-    print("Emotion detected:", text_lab)
-    return emotion_embedding
 
-if __name__ == "__main__":
-    path = input("Enter cleaned wav path: ")
-    extract_speaker_embedding(path)
-    extract_emotion_embedding(path)
+def extract_emotion_embedding(wav_path: str):
+    """
+    Extract emotion embedding from an audio file.
+
+    Emotion embedding captures emotional characteristics such as:
+    happy, sad, angry, neutral, etc.
+
+    Args:
+        wav_path (str): Path to cleaned WAV file.
+
+    Returns:
+        dict: Contains:
+              - detected emotion label
+              - emotion embedding vector (as list)
+    """
+
+    out_prob, score, index, text_lab = emotion_classifier.classify_file(wav_path)
+    emotion_embedding = out_prob.detach().cpu().numpy()
+
+    # Save embedding to file
+    np.save("emotion_embedding.npy", emotion_embedding)
+
+    return {
+        "emotion": text_lab,
+        "embedding": emotion_embedding.tolist()
+    }

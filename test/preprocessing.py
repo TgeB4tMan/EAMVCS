@@ -1,37 +1,65 @@
+"""
+preprocessing.py
+
+This module handles all audio preprocessing steps required before
+feature extraction and TTS generation.
+
+Responsibilities:
+- Convert input audio (mp3/wav/other formats) to 16kHz mono WAV
+- Apply noise reduction
+- Normalize waveform amplitude
+
+Output:
+- Cleaned WAV file ready for embedding extraction and TTS cloning
+"""
+
+import os
 import librosa
 import soundfile as sf
 import noisereduce as nr
-import numpy as np
 from pydub import AudioSegment
-import os
 
-def convert_to_wav(input_path, output_path):
+# Target sampling rate required by most speech models
+TARGET_SR = 16000
+
+
+def preprocess(input_path: str, output_path: str = "cleaned_audio.wav") -> str:
+    """
+    Preprocess an input audio file.
+
+    Steps performed:
+    1. Convert audio to WAV format
+    2. Resample to 16kHz
+    3. Convert to mono channel
+    4. Apply noise reduction
+    5. Normalize amplitude
+
+    Args:
+        input_path (str): Path to the input audio file.
+        output_path (str): Path where cleaned audio will be saved.
+
+    Returns:
+        str: Path to the cleaned WAV file.
+    """
+
+    # Convert input audio to 16kHz mono WAV
     audio = AudioSegment.from_file(input_path)
-    audio = audio.set_frame_rate(16000).set_channels(1)
-    audio.export(output_path, format="wav")
+    audio = audio.set_frame_rate(TARGET_SR).set_channels(1)
+    audio.export("temp.wav", format="wav")
 
-def clean_audio(input_wav, output_wav):
-    y, sr = librosa.load(input_wav, sr=16000)
-    
-    # Noise reduction
-    reduced_noise = nr.reduce_noise(y=y, sr=sr)
-    
-    # Normalize
-    normalized_audio = librosa.util.normalize(reduced_noise)
-    
-    sf.write(output_wav, normalized_audio, sr)
+    # Load waveform using librosa
+    y, sr = librosa.load("temp.wav", sr=TARGET_SR)
 
-def preprocess(input_file):
-    temp_wav = "temp.wav"
-    final_wav = "cleaned_audio.wav"
-    
-    convert_to_wav(input_file, temp_wav)
-    clean_audio(temp_wav, final_wav)
-    
-    os.remove(temp_wav)
-    print("Preprocessing complete. Output:", final_wav)
-    return final_wav
+    # Reduce background noise
+    y = nr.reduce_noise(y=y, sr=sr)
 
-if __name__ == "__main__":
-    file_path = input("Enter audio file path: ")
-    preprocess(file_path)
+    # Normalize waveform amplitude
+    y = librosa.util.normalize(y)
+
+    # Save cleaned audio
+    sf.write(output_path, y, sr)
+
+    # Remove temporary file
+    os.remove("temp.wav")
+
+    return output_path
