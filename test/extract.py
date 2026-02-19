@@ -31,3 +31,5 @@ if __name__ == "__main__":
     path = input("Enter cleaned wav path: ")
     extract_speaker_embedding(path)
     extract_emotion_embedding(path)
+
+#this is a test
