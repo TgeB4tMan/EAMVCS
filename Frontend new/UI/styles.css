@@ -360,3 +360,41 @@ select { width: 100%; padding: 12px; border-radius: 10px; border: none; backgrou
   .nav-container { padding:10px 14px; border-radius:12px; }
   .notification { right:12px; left:12px; max-width:none; }
 }
+
+/* Emotion Display */
+.emotion-display {
+  margin-top: 20px;
+  padding: 20px;
+  background: rgba(255,255,255,0.03);
+  border-radius: 15px;
+  border: 1px solid rgba(255,255,255,0.1);
+}
+
+.emotion-display h4 {
+  color: var(--text-primary);
+  margin-bottom: 15px;
+  font-weight: 600;
+}
+
+.emotion-result {
+  display: flex;
+  align-items: center;
+  gap: 15px;
+}
+
+.emotion-name {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--accent-gradient);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background: var(--accent-gradient);
+}
+
+.emotion-confidence {
+  font-size: 14px;
+  color: var(--text-secondary);
+  background: rgba(255,255,255,0.06);
+  padding: 4px 8px;
+  border-radius: 8px;
+}

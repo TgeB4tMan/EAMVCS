@@ -1,4 +1,10 @@
-# Ignore the heavy AI models
-**/tts_models/
-**/*.pth
-**/*.wav
+__pycache__/
+*.pyc
+*.zip
+*.m4a
+*.h5
+*.keras
+*.npy
+trash/
+uploads/
+Data/
