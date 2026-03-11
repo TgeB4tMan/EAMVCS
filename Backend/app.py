@@ -11,7 +11,7 @@ import tempfile
 import torch
 import numpy as np
 from sklearn.metrics.pairwise import cosine_similarity
-
+import whisper
 import logging
 
 # Suppress noisy /training-status poll logs from the terminal
@@ -29,7 +29,9 @@ app = FastAPI(title="NeuroVoice - Emotion-Aware TTS API")
 print("🚀 Loading NeuroVoice AI Models...")
 try:
     emotion_tts = EmotionTTS()
-    print("✅ Models loaded successfully.")
+    # Load Whisper for transcription
+    whisper_model = whisper.load_model("medium")
+    print("✅ Models loaded successfully (F5-TTS + Whisper).")
 except Exception as e:
     print(f"❌ Error loading models: {e}")
 
@@ -66,12 +68,13 @@ def get_training_status():
 async def synthesize(
     text: str = Form(...),
     language: str = Form(...),
+    ref_lang: str = Form(...),  # New parameter for reference language
     audio: UploadFile = File(...),
     alpha: float = Form(0.3)
 ):
-    print("=== Emotion-Conditioned TTS Request ===")
+    print("=== F5-TTS + Whisper Synthesis Request ===")
     print(f"Text: {text[:50]}...")
-    print(f"Language: {language}, Alpha: {alpha}")
+    print(f"Language: {language}, Ref Language: {ref_lang}, Alpha: {alpha}")
 
     # Save reference audio locally
     audio_path = os.path.join(UPLOAD_DIR, f"ref_{audio.filename}")
@@ -79,27 +82,37 @@ async def synthesize(
         f.write(await audio.read())
 
     try:
-        # STEP 1: Emotion Detection
-        emotion_result = predict_emotion(audio_path)
-        emotion_label = emotion_result['predicted_emotion']
-        confidence = emotion_result['confidence']
+        # STEP 1: Whisper Transcription of Reference Audio
+        print(f"🎤 Transcribing reference audio with Whisper (language: {ref_lang})...")
         
-        # STEP 2: Synthesize
+        # Map ref_lang to Whisper language codes
+        lang_mapping = {
+            "Malayalam": "ml",
+            "English": "en",
+            "malayalam": "ml",
+            "english": "en"
+        }
+        whisper_lang = lang_mapping.get(ref_lang, "en")
+        
+        # Transcribe with Whisper
+        result = whisper_model.transcribe(audio_path, language=whisper_lang)
+        ref_text = result["text"]
+        print(f"📝 Transcribed text: '{ref_text}'")
+        
+        # STEP 2: F5-TTS Synthesis
         import time as time_lib
         timestamp = int(time_lib.time())
         output_filename = f"output_{timestamp}_{language}.wav"
         output_path = os.path.join(UPLOAD_DIR, output_filename)
         
-        print("\n" + "┌" + "─"*50 + "┐")
-        print(f"│ 🛠️  PROSODY INJECTION DETAILS")
-        print(f"├" + "─"*50 + "┤")
-        print(f"│ Emotion: {emotion_label.upper()}")
-        print(f"│ Confidence: {confidence:.2f}")
-        print(f"│ Intensity (Alpha): {alpha:.2f}")
-        print(f"└" + "─"*50 + "┘\n")
+        print(f"🎵 Generating with F5-TTS...")
+        print(f"   Reference Text: '{ref_text}'")
+        print(f"   Generation Text: '{text}'")
         
+        # Call F5-TTS synthesis
         emotion_tts.synthesize(
             text=text,
+            ref_text=ref_text,
             reference_audio=audio_path,
             language=language,
             output_path=output_path,
@@ -120,12 +133,8 @@ async def synthesize(
         # Clip to sensible range
         voice_similarity = float(np.clip(voice_similarity, 0.4, 0.98))
         
-        # Extract VAD metrics
-        valence = emotion_result.get('valence', 0.5)
-        arousal = emotion_result.get('arousal', 0.5)
-        dominance = emotion_result.get('dominance', 0.5)
-        
-        print(f"Success! Emotion: {emotion_label}, Similarity: {voice_similarity:.3f}")
+        print(f"✅ F5-TTS synthesis successful!")
+        print(f"🎵 Voice Similarity: {voice_similarity:.3f}")
         
         # Clean up reference file
         if os.path.exists(audio_path):
@@ -133,13 +142,10 @@ async def synthesize(
             
         return {
             "audio_path": output_filename,
-            "emotion_detected": emotion_label,
-            "confidence": confidence,
-            "all_probabilities": emotion_result['all_probabilities'],
+            "ref_text": ref_text,
+            "gen_text": text,
             "voice_similarity": voice_similarity,
-            "valence": valence,
-            "arousal": arousal,
-            "dominance": dominance
+            "synthesis_method": "f5_tts"
         }
     
     except Exception as e:
@@ -150,12 +156,80 @@ async def synthesize(
             os.remove(audio_path)
         return {"error": str(e)}
 
+@app.post("/transcribe")
+async def transcribe_audio(
+    audio: UploadFile = File(...),
+    ref_lang: str = Form("English")
+):
+    """Transcribe reference audio using Whisper"""
+    print(f"🎤 Transcription Request - Language: {ref_lang}")
+    
+    # Save audio temporarily
+    audio_path = os.path.join(UPLOAD_DIR, f"temp_{audio.filename}")
+    with open(audio_path, "wb") as f:
+        f.write(await audio.read())
+    
+    try:
+        # Map ref_lang to Whisper language codes
+        lang_mapping = {
+            "Malayalam": "ml",
+            "English": "en",
+            "malayalam": "ml",
+            "english": "en"
+        }
+        whisper_lang = lang_mapping.get(ref_lang, "en")
+        
+        # Transcribe with Whisper
+        result = whisper_model.transcribe(audio_path, language=whisper_lang)
+        
+        # Clean up
+        if os.path.exists(audio_path):
+            os.remove(audio_path)
+        
+        return {
+            "text": result["text"],
+            "detected_language": whisper_lang,
+            "duration": result.get("segments", [{}])[0].get("end", 0) if result.get("segments") else 0
+        }
+        
+    except Exception as e:
+        print(f"❌ Transcription error: {e}")
+        if os.path.exists(audio_path):
+            os.remove(audio_path)
+        return {"error": str(e)}
+
+@app.post("/translate")
+async def translate_text(
+    text: str = Form(...),
+    source_lang: str = Form("auto"),
+    target_lang: str = Form("en")
+):
+    """Simple translation endpoint (placeholder for future implementation)"""
+    print(f"🌍 Translation Request - {source_lang} → {target_lang}")
+    
+    try:
+        # Placeholder translation logic
+        # In future, integrate with Google Translate API or similar
+        translated_text = f"[TRANSLATED from {source_lang} to {target_lang}: {text}]"
+        
+        return {
+            "translated_text": translated_text,
+            "source_lang": source_lang,
+            "target_lang": target_lang,
+            "service": "placeholder"
+        }
+        
+    except Exception as e:
+        return {"error": str(e)}
+
 @app.get("/audio/{filename}")
 async def get_audio(filename: str):
-    file_path = os.path.join(UPLOAD_DIR, filename)
-    if os.path.exists(file_path):
-        return FileResponse(file_path, media_type="audio/wav")
-    return {"error": "Audio file not found"}
+    """Serve generated audio files"""
+    audio_path = os.path.join(UPLOAD_DIR, filename)
+    if os.path.exists(audio_path):
+        return FileResponse(audio_path)
+    else:
+        return {"error": "Audio file not found"}
 
 @app.post("/feedback")
 async def receive_feedback(
