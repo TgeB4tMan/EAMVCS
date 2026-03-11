@@ -296,9 +296,9 @@ async function convertMp3ToWav(mp3Blob) {
 }
 
 async function generateVoice() {
-    const text = document.getElementById("textInput").value;
+    const targetText = document.getElementById("textInput").value;
+    const refLang = document.getElementById("ref-lang").value;
     const language = document.getElementById("languageSelect").value;
-    const alpha = parseFloat(document.getElementById("emotionSlider").value) / 100;
     const fileInput = document.getElementById("audioFile");
     const uploadedAudio = fileInput.files[0];
 
@@ -311,7 +311,7 @@ async function generateVoice() {
         audioBlob = recordedAudio;
     }
 
-    if (text.trim() === "") {
+    if (targetText.trim() === "") {
         showNotification("Please enter some text to speak.", "warning");
         return;
     }
@@ -326,12 +326,12 @@ async function generateVoice() {
 
     try {
         const formData = new FormData();
-        formData.append("text", text);
-        formData.append("language", language);
-        formData.append("alpha", alpha.toString());
-        formData.append("audio", audioBlob, "voice_ref.wav");
+        // Flask backend contract: reference audio + target text + reference language
+        formData.append("reference_audio", audioBlob, "voice_ref.wav");
+        formData.append("target_text", targetText);
+        formData.append("ref_lang", refLang);
 
-        const response = await fetch(`${BACKEND_URL}/synthesize`, {
+        const response = await fetch("/synthesize", {
             method: "POST",
             body: formData
         });
@@ -340,53 +340,21 @@ async function generateVoice() {
             throw new Error(`Server Error: ${response.status}`);
         }
 
-        const result = await response.json();
-        
-        if (result.error) {
-            throw new Error(result.error);
-        }
-        
-        // Load audio from the new endpoint
-        const audioResponse = await fetch(`${BACKEND_URL}/audio/${result.audio_path}`);
-        generatedAudio = await audioResponse.blob();
-        
-        // Extract real metrics from JSON response
-        const voiceSimilarity = result.voice_similarity;
-        const valence = result.valence;
-        const arousal = result.arousal;
-        const dominance = result.dominance;
-        const emotionLabel = result.emotion_detected;
-        const confidence = result.confidence;
-        
-        console.log(`Metrics Received - Emotion: ${emotionLabel} (${confidence}%)`);
+        // Flask returns the synthesized WAV directly
+        generatedAudio = await response.blob();
+        const audioURL = URL.createObjectURL(generatedAudio);
         
         const time = ((Date.now() - start) / 1000).toFixed(1);
         document.getElementById("genTime").innerText = time + "s";
         document.getElementById("audioLang").innerText = 
             document.getElementById("languageSelect").selectedOptions[0].text;
-        
-        // Update metrics with real values
-        if (voiceSimilarity) {
-            const similarityPercent = (parseFloat(voiceSimilarity) * 100).toFixed(1) + "%";
-            document.querySelector(".metrics-grid .metric:nth-child(1) .metric-value").innerText = similarityPercent;
-        }
-        
-        if (emotionLabel && confidence) {
-            const accDisplay = `${emotionLabel.toUpperCase()} (${confidence.toFixed(1)}%)`;
-            document.querySelector(".metrics-grid .metric:nth-child(2) .metric-value").innerText = accDisplay;
-        }
-        
-        // Update emotion visualization
-        if (arousal) {
-            const arousalValue = parseFloat(arousal);
-            document.querySelector(".bg-animation").style.filter = 
-                `hue-rotate(${arousalValue * 180}deg)`;
-        }
-        
-        // Create emotion profile bars
-        createEmotionBars(valence, arousal, dominance);
-        
+
         setupRealAudioPlayer();
+        const audioPlayer = document.getElementById("resultAudio");
+        if (audioPlayer) {
+            audioPlayer.src = audioURL;
+            audioPlayer.play().catch(() => {});
+        }
         navigateTo("results");
         drawWaveform();
         
