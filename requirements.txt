@@ -9,3 +9,5 @@ uvicorn
 python-multipart
 soundfile
 phonemizer
+scikit-learn
+tqdm

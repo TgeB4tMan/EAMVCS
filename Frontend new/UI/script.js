@@ -364,8 +364,9 @@ async function generateVoice() {
             }
         }
         
-        drawWaveform();
+        setupRealAudioPlayer();
         navigateTo("results");
+        drawWaveform();
         showNotification("Emotion-aware voice generated successfully", "success");
 
     } catch (err) {
@@ -425,17 +426,14 @@ function formatTime(seconds) {
 // ===========================
 
 function playResult() {
-    const audioEl = document.getElementById('resultAudio');
-    if (audioEl) {
-        if (audioEl.paused) {
-            audioEl.play();
-        } else {
-            audioEl.pause();
+    if (wavesurfer) {
+        wavesurfer.playPause();
+    } else {
+        const audioEl = document.getElementById('resultAudio');
+        if (audioEl) {
+            if (audioEl.paused) audioEl.play();
+            else audioEl.pause();
         }
-    } else if (generatedAudio) {
-        // Fallback to old method
-        const audio = new Audio(URL.createObjectURL(generatedAudio));
-        audio.play();
     }
 }
 
@@ -551,37 +549,45 @@ function showLoading(show) {
 let wavesurfer = null;
 
 function drawWaveform() {
-    // Initialize WaveSurfer if not already done
-    if (!wavesurfer && generatedAudio) {
-        wavesurfer = WaveSurfer.create({
-            container: '#waveform',
-            waveColor: '#4facfe',
-            progressColor: '#00f2fe',
-            cursorColor: '#ffffff',
-            barWidth: 2,
-            barRadius: 3,
-            cursorWidth: 1,
-            height: 100,
-            barGap: 3
-        });
-        
-        // Load the generated audio
-        wavesurfer.load(URL.createObjectURL(generatedAudio));
-        
-        // Play/pause button integration
-        wavesurfer.on('play', () => {
-            const playBtn = document.querySelector('.play-btn-large');
-            if (playBtn) playBtn.innerHTML = '<i class="fas fa-pause"></i>';
-        });
-        
-        wavesurfer.on('pause', () => {
-            const playBtn = document.querySelector('.play-btn-large');
-            if (playBtn) playBtn.innerHTML = '<i class="fas fa-play"></i>';
-        });
-    } else if (wavesurfer && generatedAudio) {
-        // Load new audio if wavesurfer exists
-        wavesurfer.load(URL.createObjectURL(generatedAudio));
+    if (!generatedAudio) return;
+
+    // Destroy existing wavesurfer if it exists to prevent duplicate rendering
+    if (wavesurfer) {
+        wavesurfer.destroy();
     }
+
+    wavesurfer = WaveSurfer.create({
+        container: '#waveform',
+        waveColor: '#4facfe',
+        progressColor: '#00f2fe',
+        cursorColor: '#ffffff',
+        barWidth: 2,
+        barRadius: 3,
+        cursorWidth: 1,
+        height: 100,
+        barGap: 3,
+        interact: true,
+        fillParent: true
+    });
+    
+    // Load the generated audio
+    wavesurfer.load(URL.createObjectURL(generatedAudio));
+    
+    // Sync UI play button icon
+    wavesurfer.on('play', () => {
+        const playBtn = document.querySelector('.play-btn-large');
+        if (playBtn) playBtn.innerHTML = '<i class="fas fa-pause"></i>';
+    });
+    
+    wavesurfer.on('pause', () => {
+        const playBtn = document.querySelector('.play-btn-large');
+        if (playBtn) playBtn.innerHTML = '<i class="fas fa-play"></i>';
+    });
+
+    wavesurfer.on('finish', () => {
+        const playBtn = document.querySelector('.play-btn-large');
+        if (playBtn) playBtn.innerHTML = '<i class="fas fa-play"></i>';
+    });
 }
 
 // ===========================

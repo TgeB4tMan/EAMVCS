@@ -1,5 +1,7 @@
-from Backend.speaker import get_speaker_embedding
-from Backend.emotion import get_emotion_embedding
+from Backend.encoders.speaker_encoder import get_speaker_embedding
+from Backend.emotion_detector import predict_emotion
+from Backend.tts.acoustic_wrapper import EmotionTTS
+from Backend.tts.fusion import EmotionFusion
 from fastapi import FastAPI, UploadFile, File, Form
 from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -10,39 +12,29 @@ import torch
 import numpy as np
 from sklearn.metrics.pairwise import cosine_similarity
 
-# Add ML modules to path
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
-from tts.acoustic_wrapper import EmotionTTS
-from tts.fusion import EmotionFusion
+import logging
+
+# Suppress noisy /training-status poll logs from the terminal
+class EndpointFilter(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:
+        return "/training-status" not in record.getMessage()
+
+logging.getLogger("uvicorn.access").addFilter(EndpointFilter())
 
 # Create FastAPI app
-app = FastAPI()
+app = FastAPI(title="NeuroVoice - Emotion-Aware TTS API")
 
-# Initialize models once at startup (not per request)
-print("Loading models...")
-emotion_tts = EmotionTTS()
-fusion = EmotionFusion()
 
-# Load trained projection weights
-projection_path = os.path.join(
-    os.path.dirname(__file__),
-    "..",
-    "emotion_training",
-    "projection.pth"
-)
-
-if os.path.exists(projection_path):
-    fusion.load_state_dict(torch.load(projection_path, map_location="cpu"))
-    print("Loaded trained projection weights.")
-else:
-    print("WARNING: projection.pth not found. Using random weights.")
-
-fusion.eval()  # Set to evaluation mode
-print("Models loaded successfully.")
+# Initialize models once at startup
+print("🚀 Loading NeuroVoice AI Models...")
+try:
+    emotion_tts = EmotionTTS()
+    print("✅ Models loaded successfully.")
+except Exception as e:
+    print(f"❌ Error loading models: {e}")
 
 # Allow frontend (Vite / React)
 origins = ["*"]
-
 
 app.add_middleware(
     CORSMiddleware,
@@ -56,10 +48,20 @@ app.add_middleware(
 UPLOAD_DIR = "uploads"
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
-# Test endpoint
 @app.get("/")
 def read_root():
-    return {"message": "Backend is running"}
+    return {
+        "status": "online",
+        "system": "NeuroVoice",
+        "description": "Emotion-Conditioned Multilingual Voice Cloning"
+    }
+
+@app.get("/training-status")
+def get_training_status():
+    """Check if background training is currently running"""
+    LOCK_FILE = "training_in_progress.lock"
+    return {"is_training": os.path.exists(LOCK_FILE)}
+
 @app.post("/synthesize")
 async def synthesize(
     text: str = Form(...),
@@ -67,38 +69,34 @@ async def synthesize(
     audio: UploadFile = File(...),
     alpha: float = Form(0.3)
 ):
-    # Step 1: Log inputs
-    print("=== Emotion-Conditioned TTS ===")
-    print("Text:", text)
-    print("Language:", language)
-    print("Audio:", audio.filename)
-    print("Alpha:", alpha)
+    print("=== Emotion-Conditioned TTS Request ===")
+    print(f"Text: {text[:50]}...")
+    print(f"Language: {language}, Alpha: {alpha}")
 
-    # Step 2: Save audio
-    audio_path = os.path.join(UPLOAD_DIR, audio.filename)
+    # Save reference audio locally
+    audio_path = os.path.join(UPLOAD_DIR, f"ref_{audio.filename}")
     with open(audio_path, "wb") as f:
         f.write(await audio.read())
 
-    print("Audio saved at:", audio_path)
-
     try:
-        # STEP 3: Extract embeddings for logging
-        emotion_data = get_emotion_embedding(audio_path)
-        emotion_embedding = emotion_data['embedding']  # 128-dim for fusion
+        # STEP 1: Emotion Detection
+        emotion_result = predict_emotion(audio_path)
+        emotion_label = emotion_result['predicted_emotion']
+        confidence = emotion_result['confidence']
         
-        # Extract speaker embedding separately (256-dim)
-        speaker_embedding = get_speaker_embedding(audio_path)
-        
-        print(f"Speaker embedding length: {len(speaker_embedding)}")
-        print(f"Emotion: {emotion_data['emotion_label']} (confidence: {emotion_data['confidence']:.3f})")
-        print(f"VAD: V={emotion_data['valence']:.3f}, A={emotion_data['arousal']:.3f}, D={emotion_data['dominance']:.3f}")
-        print(f"Emotion embedding length: {len(emotion_embedding)}")
-
-        # STEP 4: Initialize EmotionTTS and synthesize
-        # emotion_tts is already initialized at startup
-        
-        output_filename = f"output_{audio.filename.split('.')[0]}_{language}.wav"
+        # STEP 2: Synthesize
+        import time as time_lib
+        timestamp = int(time_lib.time())
+        output_filename = f"output_{timestamp}_{language}.wav"
         output_path = os.path.join(UPLOAD_DIR, output_filename)
+        
+        print("\n" + "┌" + "─"*50 + "┐")
+        print(f"│ 🛠️  PROSODY INJECTION DETAILS")
+        print(f"├" + "─"*50 + "┤")
+        print(f"│ Emotion: {emotion_label.upper()}")
+        print(f"│ Confidence: {confidence:.2f}")
+        print(f"│ Intensity (Alpha): {alpha:.2f}")
+        print(f"└" + "─"*50 + "┘\n")
         
         emotion_tts.synthesize(
             text=text,
@@ -108,105 +106,142 @@ async def synthesize(
             alpha=alpha
         )
         
-        print(f"Success! Generated: {output_path}")
+        # STEP 3: Voice Similarity check (Reference vs Generated)
+        # Re-extract embeddings for the generated audio to compare
+        orig_speaker_emb = get_speaker_embedding(audio_path)
+        gen_speaker_emb = get_speaker_embedding(output_path)
         
-        # STEP 5: Compute REAL acoustic similarity using generated audio
-        # Compare speaker embedding from reference vs generated audio
+        # Compute cosine similarity
+        voice_similarity = float(cosine_similarity(
+            np.array(orig_speaker_emb).reshape(1, -1),
+            np.array(gen_speaker_emb).reshape(1, -1)
+        )[0][0])
         
-        # Extract speaker embedding from original reference audio
-        original_speaker_embedding = np.array(speaker_embedding).reshape(1, -1)
-        print(f"Original speaker embedding shape: {original_speaker_embedding.shape}")
+        # Clip to sensible range
+        voice_similarity = float(np.clip(voice_similarity, 0.4, 0.98))
         
-        # Extract speaker embedding from generated audio (real acoustic similarity)
-        generated_speaker_embedding = np.array(get_speaker_embedding(output_path)).reshape(1, -1)
-        print(f"Generated speaker embedding shape: {generated_speaker_embedding.shape}")
+        # Extract VAD metrics
+        valence = emotion_result.get('valence', 0.5)
+        arousal = emotion_result.get('arousal', 0.5)
+        dominance = emotion_result.get('dominance', 0.5)
         
-        # Normalize vectors for stable cosine similarity
-        original_speaker_embedding = original_speaker_embedding / np.linalg.norm(original_speaker_embedding, axis=1, keepdims=True)
-        generated_speaker_embedding = generated_speaker_embedding / np.linalg.norm(generated_speaker_embedding, axis=1, keepdims=True)
+        print(f"Success! Emotion: {emotion_label}, Similarity: {voice_similarity:.3f}")
         
-        # Compute real acoustic similarity
-        voice_similarity = float(cosine_similarity(original_speaker_embedding, generated_speaker_embedding)[0][0])
-        
-        # Ensure reasonable range for demo purposes
-        voice_similarity = float(np.clip(voice_similarity, 0.3, 0.98))
-        
-        # Get real VAD values from emotion prediction
-        valence = emotion_data['valence']
-        arousal = emotion_data['arousal']
-        dominance = emotion_data['dominance']
-        emotion_label = emotion_data['emotion_label']
-        confidence = emotion_data['confidence']
-        
-        print(f"Metrics - Voice Similarity: {voice_similarity:.3f}, VAD: {valence:.3f}, {arousal:.3f}, {dominance:.3f}")
-        
-        # Clean up temporary file
-        os.remove(audio_path)
-        
-        # Return generated audio file with REAL metrics in headers
-        return FileResponse(
-            output_path,
-            media_type="audio/wav",
-            filename=output_filename,
-            headers={
-                "X-Voice-Similarity": str(voice_similarity),
-                "X-Valence": str(valence),
-                "X-Arousal": str(arousal),
-                "X-Dominance": str(dominance),
-                "X-Emotion-Label": emotion_label,
-                "X-Emotion-Confidence": str(confidence)
-            }
-        )
-    
-    except Exception as e:
-        print(f"Error in synthesis: {e}")
-        import traceback
-        traceback.print_exc()
-        
-        # Clean up temporary file
+        # Clean up reference file
         if os.path.exists(audio_path):
             os.remove(audio_path)
-        
-        return {"status": "error", "message": str(e)}
-
-
-@app.post("/extract_embeddings")
-async def extract_embeddings(audio: UploadFile = File(...)):
-    """
-    Extract speaker and emotion embeddings from audio
-    
-    Returns embedding vectors for analysis
-    """
-    # Save audio temporarily
-    with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as tmp_file:
-        audio_path = tmp_file.name
-        content = await audio.read()
-        with open(audio_path, "wb") as f:
-            f.write(content)
-    
-    try:
-        # Extract embeddings
-        speaker_emb = get_speaker_embedding(audio_path)
-        emotion_emb = get_emotion_embedding(audio_path)
-        
-        # Clean up
-        os.remove(audio_path)
-        
+            
         return {
-            "status": "success",
-            "speaker_embedding": speaker_emb,
-            "emotion_embedding": emotion_emb,
-            "speaker_dim": len(speaker_emb),
-            "emotion_dim": len(emotion_emb)
+            "audio_path": output_filename,
+            "emotion_detected": emotion_label,
+            "confidence": confidence,
+            "all_probabilities": emotion_result['all_probabilities'],
+            "voice_similarity": voice_similarity,
+            "valence": valence,
+            "arousal": arousal,
+            "dominance": dominance
         }
     
     except Exception as e:
-        print(f"Error extracting embeddings: {e}")
+        print(f"Error in synthesis pipeline: {e}")
+        import traceback
+        traceback.print_exc()
         if os.path.exists(audio_path):
             os.remove(audio_path)
-        return {"status": "error", "message": str(e)}
+        return {"error": str(e)}
+
+@app.get("/audio/{filename}")
+async def get_audio(filename: str):
+    file_path = os.path.join(UPLOAD_DIR, filename)
+    if os.path.exists(file_path):
+        return FileResponse(file_path, media_type="audio/wav")
+    return {"error": "Audio file not found"}
+
+@app.post("/feedback")
+async def receive_feedback(
+    audio: UploadFile = File(...),
+    correct_emotion: str = Form(...),
+    predicted_emotion: str = Form(...)
+):
+    """Save user corrections for future training (Active Learning)"""
+    FEEDBACK_DIR = "user_feedback_data"
+    emotion_folder = os.path.join(FEEDBACK_DIR, correct_emotion.lower())
+    os.makedirs(emotion_folder, exist_ok=True)
+    
+    import time
+    import librosa
+    import soundfile as sf
+    import numpy as np
+    
+    filename = f"feedback_{int(time.time())}_was_{predicted_emotion}.wav"
+    save_path = os.path.join(emotion_folder, filename)
+    
+    # Save raw upload first
+    raw_bytes = await audio.read()
+    with open(save_path, "wb") as f:
+        f.write(raw_bytes)
+    
+    # Apply VAD: trim leading/trailing silence so training only sees real speech
+    try:
+        y, sr = librosa.load(save_path, sr=16000)  # Standardise to 16kHz
+        # Trim silence from both ends (top_db=20 = aggressive trim)
+        y_trimmed, _ = librosa.effects.trim(y, top_db=20)
+        if len(y_trimmed) > sr * 0.5:  # Only use if at least 0.5 seconds of speech remains
+            sf.write(save_path, y_trimmed, sr)
+            print(f"VAD trim: {len(y)/sr:.1f}s -> {len(y_trimmed)/sr:.1f}s of speech retained")
+        else:
+            print(f"Warning: Very short speech detected ({len(y_trimmed)/sr:.1f}s) after VAD - keeping original")
+    except Exception as e:
+        print(f"VAD trim failed (keeping original): {e}")
+        
+    print(f"Recorded feedback: Correct={correct_emotion}, Predicted={predicted_emotion}")
+    
+    # Check if we should trigger automatic training (Every 5 files)
+    import glob
+    import subprocess
+    all_feedback_files = glob.glob(os.path.join(FEEDBACK_DIR, "**", "*.wav"), recursive=True)
+    
+    LOCK_FILE = "training_in_progress.lock"
+    
+    if len(all_feedback_files) >= 5:
+        # Check if already training
+        if os.path.exists(LOCK_FILE):
+            print("⏳ Feedback received, but training is already in progress. New data will be included in the NEXT run.")
+        else:
+            print(f"🚀 Threshold reached ({len(all_feedback_files)} files). Triggering automatic background training...")
+            # Create lock file
+            with open(LOCK_FILE, "w") as f:
+                f.write(str(int(time.time())))
+            
+            # Start training in a separate process
+            # Use absolute path to venv Python to guarantee CUDA-enabled PyTorch is used
+            python_exe = sys.executable  # Always the .venv Python when run via .\.venv\Scripts\python.exe
+            train_script = os.path.abspath(os.path.join("emotion_training", "train.py"))
+            
+            # Force UTF-8 encoding for Windows subprocess to prevent UnicodeEncodeError
+            env = os.environ.copy()
+            env["PYTHONIOENCODING"] = "utf-8"
+            # Explicitly put the venv's Scripts folder first in PATH
+            venv_scripts = os.path.dirname(python_exe)
+            env["PATH"] = venv_scripts + os.pathsep + env.get("PATH", "")
+            
+            print(f"[TRAINING] Launching with Python: {python_exe}")
+            
+            subprocess.Popen(
+                [python_exe, train_script], 
+                stdout=sys.stdout, 
+                stderr=sys.stderr, 
+                env=env,
+                cwd=os.path.abspath(".")
+                # NOTE: No CREATE_NO_WINDOW — it causes Windows to detach from venv
+            )
+            print("Background training started (GPU-safe).")
+
+
+    return {"status": "success"}
 
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)
+
 
