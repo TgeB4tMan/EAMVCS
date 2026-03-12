@@ -10,39 +10,7 @@ let audioChunks = [];
 let recordedAudio = null;
 let isRecording = false;
 let generatedAudio = null;
-const BACKEND_URL = "http://127.0.0.1:8000";
-
-// ===========================
-// CORE STATE RESET
-// ===========================
-function resetVoiceState() {
-    recordedAudio = null;
-    audioChunks = [];
-    isRecording = false;
-    
-    // Reset UI elements
-    const fileInput = document.getElementById("audioFile");
-    if (fileInput) fileInput.value = "";
-    
-    const status = document.getElementById("recordingStatus");
-    if (status) status.innerText = "Click to start recording";
-    
-    const recordBtn = document.getElementById("recordBtn");
-    if (recordBtn) recordBtn.classList.remove("recording");
-    
-    // Reset preview players
-    if (window.referenceAudio) {
-        window.referenceAudio.pause();
-        window.referenceAudio = null;
-    }
-    
-    const refTimeline = document.getElementById('refTimeline');
-    if (refTimeline) refTimeline.style.width = '0%';
-    
-    const refDuration = document.getElementById('refDuration');
-    if (refDuration) refDuration.innerText = '0:00';
-}
-
+const BACKEND_URL = "http://localhost:8000";
 
 
 // ===========================
@@ -89,11 +57,15 @@ document.querySelectorAll(".nav-link").forEach(link => {
 // ===========================
 
 const textInput = document.getElementById("textInput");
+
 if (textInput) {
+
     textInput.addEventListener("input", function () {
-        const charCount = document.getElementById("charCount");
-        if (charCount) charCount.innerText = this.value.length;
+
+        document.getElementById("charCount").innerText = this.value.length;
+
     });
+
 }
 
 
@@ -120,11 +92,7 @@ async function toggleRecording() {
             mediaRecorder.onstop = () => {
 
                 recordedAudio = new Blob(audioChunks, { type: "audio/webm" });
-                
-                // FIX: If we just recorded, we must ignore any old uploaded file
-                const fileInput = document.getElementById("audioFile");
-                if (fileInput) fileInput.value = ""; 
-                
+
                 showNotification("Recording saved", "success");
 
             };
@@ -133,11 +101,9 @@ async function toggleRecording() {
 
             isRecording = true;
 
-            const recordBtn = document.getElementById("recordBtn");
-            if (recordBtn) recordBtn.classList.add("recording");
+            document.getElementById("recordBtn").classList.add("recording");
 
-            const recordingStatus = document.getElementById("recordingStatus");
-            if (recordingStatus) recordingStatus.innerText = "Recording...";
+            document.getElementById("recordingStatus").innerText = "Recording...";
 
         }
 
@@ -166,11 +132,9 @@ function stopRecording() {
 
         isRecording = false;
 
-        const recordBtn = document.getElementById("recordBtn");
-        if (recordBtn) recordBtn.classList.remove("recording");
+        document.getElementById("recordBtn").classList.remove("recording");
 
-        const recordingStatus = document.getElementById("recordingStatus");
-        if (recordingStatus) recordingStatus.innerText = "Recording stopped";
+        document.getElementById("recordingStatus").innerText = "Recording stopped";
 
     }
 
@@ -222,18 +186,17 @@ if (audioFileInput) {
 // ===========================
 
 function proceedToGenerate() {
+
     if (!recordedAudio) {
-        // Double check if file input has something
-        const fileInput = document.getElementById("audioFile");
-        if (fileInput && fileInput.files.length > 0) {
-            recordedAudio = fileInput.files[0];
-        } else {
-            showNotification("Please upload or record voice first", "warning");
-            return;
-        }
+
+        showNotification("Please upload or record voice first", "warning");
+
+        return;
+
     }
+
     navigateTo("generate");
-    setupReferencePlayer(); // Refresh player with current audio
+
 }
 
 // ===========================
@@ -298,26 +261,18 @@ async function convertMp3ToWav(mp3Blob) {
 async function generateVoice() {
     const text = document.getElementById("textInput").value;
     const language = document.getElementById("languageSelect").value;
+    const refLang = document.getElementById("refLangSelect").value;
+    const optionalRefText = document.getElementById("refTextInput").value.trim();
     const alpha = parseFloat(document.getElementById("emotionSlider").value) / 100;
-    const fileInput = document.getElementById("audioFile");
-    const uploadedAudio = fileInput.files[0];
-
-    // FIX: Core State Management
-    let audioBlob = null;
-    if (uploadedAudio) {
-        audioBlob = uploadedAudio;
-        recordedAudio = null; // Clear old recording to avoid confusion
-    } else if (recordedAudio) {
-        audioBlob = recordedAudio;
-    }
+    const uploadedAudio = document.getElementById("audioFile").files[0];
 
     if (text.trim() === "") {
-        showNotification("Please enter some text to speak.", "warning");
+        showNotification("Enter text first", "warning");
         return;
     }
 
-    if (!audioBlob) {
-        showNotification("Please provide a reference voice (record or upload).", "warning");
+    if (!uploadedAudio && !recordedAudio) {
+        showNotification("Please upload or record audio", "warning");
         return;
     }
 
@@ -325,78 +280,68 @@ async function generateVoice() {
     const start = Date.now();
 
     try {
+        let audioBlob = uploadedAudio || recordedAudio;
+        
+        // Convert MP3 to WAV if needed
+        if (audioBlob.type.includes("mp3")) {
+            audioBlob = await convertMp3ToWav(audioBlob);
+        }
+
         const formData = new FormData();
         formData.append("text", text);
         formData.append("language", language);
+        formData.append("ref_lang", refLang);
         formData.append("alpha", alpha.toString());
-        formData.append("audio", audioBlob, "voice_ref.wav");
+        formData.append("audio", audioBlob, "reference.wav");
+        if (optionalRefText) {
+            formData.append("ref_text", optionalRefText);
+        }
 
         const response = await fetch(`${BACKEND_URL}/synthesize`, {
             method: "POST",
             body: formData
         });
 
-        if (!response.ok) {
-            throw new Error(`Server Error: ${response.status}`);
+        let result = null;
+        try {
+            result = await response.json();
+        } catch (parseError) {
+            throw new Error(`Invalid response from server: ${parseError.message}`);
         }
 
-        const result = await response.json();
-        
-        if (result.error) {
-            throw new Error(result.error);
+        if (!response.ok || result.error) {
+            throw new Error(result?.error || `HTTP error! status: ${response.status}`);
         }
-        
-        // Load audio from the new endpoint
-        const audioResponse = await fetch(`${BACKEND_URL}/audio/${result.audio_path}`);
+
+        if (!result.audio_path) {
+            throw new Error("Backend did not return generated audio path.");
+        }
+
+        const audioResponse = await fetch(`${BACKEND_URL}/audio/${encodeURIComponent(result.audio_path)}`);
+        if (!audioResponse.ok) {
+            throw new Error(`Failed to download generated audio: ${audioResponse.status}`);
+        }
+
         generatedAudio = await audioResponse.blob();
-        
-        // Extract real metrics from JSON response
-        const voiceSimilarity = result.voice_similarity;
-        const valence = result.valence;
-        const arousal = result.arousal;
-        const dominance = result.dominance;
-        const emotionLabel = result.emotion_detected;
-        const confidence = result.confidence;
-        
-        console.log(`Metrics Received - Emotion: ${emotionLabel} (${confidence}%)`);
         
         const time = ((Date.now() - start) / 1000).toFixed(1);
         document.getElementById("genTime").innerText = time + "s";
         document.getElementById("audioLang").innerText = 
             document.getElementById("languageSelect").selectedOptions[0].text;
         
-        // Update metrics with real values
-        if (voiceSimilarity) {
-            const similarityPercent = (parseFloat(voiceSimilarity) * 100).toFixed(1) + "%";
-            document.querySelector(".metrics-grid .metric:nth-child(1) .metric-value").innerText = similarityPercent;
+        if (typeof result.voice_similarity === "number") {
+            document.querySelector(".metric:nth-child(1) .metric-value").innerText = 
+                (result.voice_similarity * 100).toFixed(1) + "%";
+        } else {
+            document.querySelector(".metric:nth-child(1) .metric-value").innerText = "—";
         }
         
-        if (emotionLabel && confidence) {
-            const accDisplay = `${emotionLabel.toUpperCase()} (${confidence.toFixed(1)}%)`;
-            document.querySelector(".metrics-grid .metric:nth-child(2) .metric-value").innerText = accDisplay;
-        }
-        
-        // Update emotion visualization
-        if (arousal) {
-            const arousalValue = parseFloat(arousal);
-            document.querySelector(".bg-animation").style.filter = 
-                `hue-rotate(${arousalValue * 180}deg)`;
-        }
-        
-        // Create emotion profile bars
-        createEmotionBars(valence, arousal, dominance);
+        document.querySelector(".metric:nth-child(2) .metric-value").innerText =
+            result.ref_text_source === "manual" ? "Manual Ref" : "Whisper Ref";
         
         setupRealAudioPlayer();
         navigateTo("results");
         drawWaveform();
-        
-        // Show Feedback Section
-        const feedbackContainer = document.getElementById('feedbackContainer');
-        if (feedbackContainer) feedbackContainer.style.display = 'block';
-        
-        const correctionSection = document.getElementById('correctionSection');
-        if (correctionSection) correctionSection.style.display = 'none';
-
         showNotification("Voice generated successfully", "success");
 
     } catch (err) {
@@ -406,7 +351,6 @@ async function generateVoice() {
         showLoading(false);
     }
 }
-
 
 // ===========================
 // REAL AUDIO PLAYER SETUP
@@ -532,8 +476,9 @@ function downloadAudio() {
 // ===========================
 
 function generateAnother() {
-    resetVoiceState();
-    navigateTo("upload");
+
+    navigateTo("generate");
+
 }
 
 
@@ -566,7 +511,8 @@ function shareResult() {
 function showLoading(show) {
 
     const overlay = document.getElementById("loadingOverlay");
-    if (overlay) overlay.style.display = show ? "flex" : "none";
+
+    overlay.style.display = show ? "flex" : "none";
 
 }
 
@@ -630,47 +576,29 @@ function createEmotionBars(valence, arousal, dominance) {
         const emotionBars = document.createElement('div');
         emotionBars.className = 'emotion-bars';
         emotionBars.innerHTML = `
-            <div class="emotion-header">
-                <h4>VAD Emotion Intelligence Model</h4>
-                <div class="info-icon">ⓘ
-                    <div class="info-tooltip">
-                        <p><strong>Valence:</strong> Measures how positive or negative the emotion is.</p>
-                        <p><strong>Arousal:</strong> Measures the intensity and energy level.</p>
-                        <p><strong>Dominance:</strong> Measures the degree of control expressed.</p>
-                    </div>
-                </div>
-            </div>
+            <h4>Emotion Profile</h4>
             <div class="emotion-bar-container">
                 <div class="emotion-bar-item">
-                    <div class="bar-label">
-                        <span>Valence <small>(Happiness vs Sadness)</small></span>
-                        <span id="valenceValue" class="vad-number">0.00</span>
-                    </div>
+                    <span>Valence</span>
                     <div class="emotion-bar-track">
                         <div id="valenceBar" class="emotion-bar-fill"></div>
                     </div>
+                    <span id="valenceValue">0.00</span>
                 </div>
                 <div class="emotion-bar-item">
-                    <div class="bar-label">
-                        <span>Arousal <small>(Excitement vs Calm)</small></span>
-                        <span id="arousalValue" class="vad-number">0.00</span>
-                    </div>
+                    <span>Arousal</span>
                     <div class="emotion-bar-track">
                         <div id="arousalBar" class="emotion-bar-fill"></div>
                     </div>
+                    <span id="arousalValue">0.00</span>
                 </div>
                 <div class="emotion-bar-item">
-                    <div class="bar-label">
-                        <span>Dominance <small>(Confidence vs Fear)</small></span>
-                        <span id="dominanceValue" class="vad-number">0.00</span>
-                    </div>
+                    <span>Dominance</span>
                     <div class="emotion-bar-track">
                         <div id="dominanceBar" class="emotion-bar-fill"></div>
                     </div>
+                    <span id="dominanceValue">0.00</span>
                 </div>
-            </div>
-            <div class="vad-explanation-card">
-                <p id="vadDescription">Detecting emotional nuances...</p>
             </div>
         `;
         metricsSection.appendChild(emotionBars);
@@ -678,91 +606,14 @@ function createEmotionBars(valence, arousal, dominance) {
     
     // Update emotion bars with real values
     if (valence !== null && arousal !== null && dominance !== null) {
-        const vBar = document.getElementById('valenceBar');
-        if (vBar) vBar.style.width = (valence * 100) + '%';
-        const vVal = document.getElementById('valenceValue');
-        if (vVal) vVal.innerText = valence.toFixed(2);
+        document.getElementById('valenceBar').style.width = (valence * 100) + '%';
+        document.getElementById('valenceValue').innerText = valence.toFixed(2);
         
-        const aBar = document.getElementById('arousalBar');
-        if (aBar) aBar.style.width = (arousal * 100) + '%';
-        const aVal = document.getElementById('arousalValue');
-        if (aVal) aVal.innerText = arousal.toFixed(2);
+        document.getElementById('arousalBar').style.width = (arousal * 100) + '%';
+        document.getElementById('arousalValue').innerText = arousal.toFixed(2);
         
-        const dBar = document.getElementById('dominanceBar');
-        if (dBar) dBar.style.width = (dominance * 100) + '%';
-        const dVal = document.getElementById('dominanceValue');
-        if (dVal) dVal.innerText = dominance.toFixed(2);
-
-        // Dynamic Text Explanation
-        const descEl = document.getElementById('vadDescription');
-        if (descEl) {
-            let desc = "";
-            // More sensitive thresholds for a 'High Fidelity' feel
-            if (valence > 0.65) desc += "The voice sounds **Positive and Happy**. ";
-            else if (valence < 0.35) desc += "The voice sounds **Negative or Sad**. ";
-            else if (valence > 0.52) desc += "The tone is **Pleasant and Bright**. ";
-            else if (valence < 0.48) desc += "The tone is **Serious and Somber**. ";
-            else desc += "The emotional tone is **Balanced and Neutral**. ";
-
-            if (arousal > 0.65) desc += "There is **High Energy** and excitement. ";
-            else if (arousal < 0.35) desc += "The recording is **Calm and Muted**. ";
-            else if (arousal > 0.55) desc += "The energy level is **Active**. ";
-            else if (arousal < 0.45) desc += "The energy level is **Relaxed**. ";
-
-            descEl.innerHTML = desc;
-        }
-    }
-}
-
-// ===========================
-// FEEDBACK SYSTEM
-// ===========================
-
-function showCorrection() {
-    const section = document.getElementById('correctionSection');
-    if (section) section.style.display = 'block';
-}
-
-async function submitFeedback(isCorrect) {
-    const feedbackContainer = document.getElementById('feedbackContainer');
-    // Extract predicted emotion from the UI
-    const metricsSection = document.querySelector(".metrics-grid .metric:nth-child(2) .metric-value").innerText;
-    const predictedEmotion = metricsSection.split(' ')[0].toLowerCase();
-    
-    let correctEmotion = predictedEmotion;
-
-    if (!isCorrect) {
-        correctEmotion = document.getElementById('correctEmotionSelect').value;
-    }
-
-    try {
-        const formData = new FormData();
-        const audioToUpload = recordedAudio || document.getElementById("audioFile").files[0];
-        formData.append("audio", audioToUpload, "feedback.wav");
-        formData.append("correct_emotion", correctEmotion);
-        formData.append("predicted_emotion", predictedEmotion);
-
-        const response = await fetch(`${BACKEND_URL}/feedback`, {
-            method: "POST",
-            body: formData
-        });
-
-        if (response.ok) {
-            showNotification("Feedback received! Thank you.", "success");
-            
-            // Temporary success message without destroying the structure
-            const originalContent = feedbackContainer.innerHTML;
-            feedbackContainer.innerHTML = "<h4>Feedback saved successfully!</h4>";
-            
-            setTimeout(() => {
-                feedbackContainer.style.display = 'none';
-                feedbackContainer.innerHTML = originalContent; // Restore it for next time
-            }, 2000);
-        } else {
-            throw new Error("Failed to send feedback");
-        }
-    } catch (error) {
-        showNotification("Error: " + error.message, "error");
+        document.getElementById('dominanceBar').style.width = (dominance * 100) + '%';
+        document.getElementById('dominanceValue').innerText = dominance.toFixed(2);
     }
 }
 
@@ -771,71 +622,22 @@ async function submitFeedback(isCorrect) {
 // ===========================
 
 function showNotification(message, type = "info") {
+
     const div = document.createElement("div");
+
     div.className = `notification notification-${type}`;
+
     div.innerHTML = `
-        <span>${message}</span>
+        ${message}
         <button onclick="this.parentElement.remove()">✖</button>
     `;
 
     document.body.appendChild(div);
 
     setTimeout(() => {
-        div.style.opacity = '0';
-        div.style.transform = 'translateX(20px)';
-        setTimeout(() => div.remove(), 300);
+
+        div.remove();
+
     }, 4000);
-}
-// ===========================
-// ALPHA SLIDER DISPLAY
-// ===========================
-const emotionSlider = document.getElementById("emotionSlider");
-if (emotionSlider) {
-    emotionSlider.addEventListener("input", function() {
-        const val = (this.value / 100).toFixed(1);
-        const display = document.getElementById("alphaVal");
-        if (display) display.innerText = val;
-    });
-}
 
-// ===========================
-// TRAINING STATUS POLLING
-// ===========================
-async function checkTrainingStatus() {
-    try {
-        const response = await fetch(`${BACKEND_URL}/training-status`);
-        const data = await response.json();
-        
-        const badge = document.getElementById("trainingStatus");
-        if (badge) {
-            badge.style.display = data.is_training ? "flex" : "none";
-        }
-        
-        // Lock feedback buttons if training
-        const feedbackButtons = document.getElementById("feedbackButtons");
-        const trainingLockedMsg = document.getElementById("trainingLockedMsg");
-        const correctionSection = document.getElementById("correctionSection");
-        
-        if (feedbackButtons && trainingLockedMsg) {
-            if (data.is_training) {
-                feedbackButtons.style.display = "none";
-                if (correctionSection) correctionSection.style.display = "none";
-                trainingLockedMsg.style.display = "block";
-            } else {
-                // Only show buttons if the locked message is currently being shown
-                // (prevents overriding the 'Thank you' success message)
-                if (trainingLockedMsg.style.display === "block") {
-                    feedbackButtons.style.display = "flex";
-                    trainingLockedMsg.style.display = "none";
-                }
-            }
-        }
-        
-    } catch (e) {
-        // Silently fail if backend is restarting
-    }
 }
-
-// Poll every 15 seconds (reduce terminal log spam)
-setInterval(checkTrainingStatus, 15000);
-checkTrainingStatus(); // Initial check
