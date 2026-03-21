@@ -1,0 +1,17 @@
+python-multipart
+fastapi
+uvicorn
+pydantic
+numpy
+librosa
+soundfile
+scikit-learn
+resemblyzer
+openai-whisper
+transformers>=4.44,<4.50
+tokenizers<0.21
+huggingface-hub>=0.24
+safetensors>=0.4
+sentencepiece>=0.1.99
+protobuf>=4.0
+git+https://github.com/AI4Bharat/IndicF5.git

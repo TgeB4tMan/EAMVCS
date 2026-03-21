@@ -1,0 +1,3 @@
+[submodule "ML/yourtts"]
+	path = ML/yourtts
+	url = https://github.com/Edresson/YourTTS.git

@@ -1,0 +1,48 @@
+__pycache__/
+*.pyc
+*.zip
+*.m4a
+*.h5
+*.keras
+*.npy
+trash/
+uploads/
+Data/
+venv/
+.venv/
+
+# IDE & Editor
+.vscode/
+.idea/
+.DS_Store
+
+# Machine Learning Models & Caches
+models/
+.hf_cache/
+*.pth
+emotion_model.pth
+*.safetensors
+*.pack
+*.h5
+*.keras
+
+# User Data & Feedback
+user_feedback_data/
+feedback_archive/
+training_data/
+teacher_demo/
+
+# Logs & Temporary Files
+*.log
+eval_final.txt
+eval_results.txt
+download_nllb.py
+
+# Test & Development Files
+test_*.py
+test_*.md
+test_audio/
+complete_test.py
+simple_test.py
+prepare_demo.py
+archived_training_results.md
