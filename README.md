@@ -1,6 +1,6 @@
 # 🎭 EAMVCS - Emotion-Aware Multilingual Voice Cloning System
 
-An advanced AI system that analyzes voice emotions and generates synthesized speech with emotional characteristics across multiple Indian languages.
+An advanced AI system that analyzes voice emotions and generates synthesized speech with emotional characteristics across multiple Indian languages .
 
 ## 🚀 **Quick Start (5 Minutes)**
 
